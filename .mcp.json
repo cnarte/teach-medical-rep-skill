@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "medical-rep-tools": {
+      "command": "node",
+      "args": ["mcp-server/index.js"],
+      "cwd": "/Users/cnarte/project/medical_rep_skill_creation"
+    }
+  }
+}
