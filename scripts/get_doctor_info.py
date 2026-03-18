@@ -1,26 +1,78 @@
 #!/usr/bin/env python3
 """
-Enrich a doctor's profile using search data or generate search queries for the agent.
+Doctor info lookup. Priority: Google Sheet → web search queries → ask MR.
+Also parses web search results into structured profiles.
 
-Two modes of operation:
-
-1. Generate queries (agent calls web_search with these):
-   python3 scripts/get_doctor_info.py --name "Dr. Rina Mukherjee" --city "Kolkata" --specialty "Gynecologist" --generate-queries
-
-2. Parse pre-fetched search results into structured profile:
-   python3 scripts/get_doctor_info.py --name "Dr. Rina Mukherjee" --city "Kolkata" --specialty "Gynecologist" --search-results '{"practo": "...", "nmc": "...", "justdial": "..."}'
-
-Outputs JSON to stdout.
+Usage:
+    python3 get_doctor_info.py --name "ALKA . SEN" --city "Kolkata" --specialty "Gynecologist" --lookup
+    python3 get_doctor_info.py --name "Dr. X" --city "Kolkata" --specialty "GP" --generate-queries
+    python3 get_doctor_info.py --name "Dr. X" --city "Kolkata" --specialty "GP" --search-results '{"practo": "..."}'
 """
 
 import argparse
 import json
+import os
 import re
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from sheets_config import read_sheet_csv, DOCTOR_SHEET_GID
 
-def generate_queries(name: str, city: str, specialty: str) -> dict:
-    """Generate search queries the agent should execute via web_search."""
+
+def normalize_name(name):
+    return re.sub(r"[\s.]+", " ", name).strip().upper()
+
+
+def lookup_from_sheet(name, city=None, specialty=None):
+    rows, err = read_sheet_csv(gid=DOCTOR_SHEET_GID)
+    if err or rows is None:
+        return None, f"Sheet read failed: {err}"
+
+    name_norm = normalize_name(name)
+    matches = []
+
+    for row in rows:
+        row_name = normalize_name(row.get("Doctor", ""))
+        if name_norm == row_name or name_norm in row_name or row_name in name_norm:
+            matches.append(row)
+
+    if not matches:
+        return None, "Not found in doctor sheet"
+
+    # Deduplicate — same doctor has multiple visit rows. Take first for profile, aggregate visits.
+    first = matches[0]
+    visit_dates = sorted(
+        set(
+            row.get("Visit Date", "").split("T")[0]
+            for row in matches
+            if row.get("Visit Date")
+        )
+    )
+
+    doctor = {
+        "name": first.get("Doctor", ""),
+        "specialty": first.get("Speciality", ""),
+        "qualification": first.get("Qualification", ""),
+        "potential": first.get("Potential", ""),
+        "city": first.get("Area Patch", city or ""),
+        "frequency": first.get("Frequency Name", ""),
+        "total_visits_in_data": len(matches),
+        "recent_visit_dates": visit_dates[-5:],
+        "clinic": "",
+        "hospital_affiliations": [],
+        "best_visit_time": "",
+        "prescribing_habits": "",
+    }
+
+    return {
+        "status": "found",
+        "source": "google_sheet",
+        "confidence": "high",
+        "doctor": doctor,
+    }, None
+
+
+def generate_queries(name, city, specialty):
     base = f"{name} {specialty} {city}"
     queries = [
         f"{base} Practo",
@@ -33,8 +85,7 @@ def generate_queries(name: str, city: str, specialty: str) -> dict:
     return {"status": "queries_generated", "queries": queries, "doctor": name}
 
 
-def extract_clinic(text: str, name: str, city: str) -> str:
-    """Try to extract clinic name from search result text."""
+def extract_clinic(text, name, city):
     patterns = [
         r"(?:clinic|practice|chamber)[:\s]+([A-Z][A-Za-z\s&'.,-]+)",
         r"(?:at|visits?)\s+([A-Z][A-Za-z\s&'.,-]{3,40}(?:Clinic|Hospital|Centre|Center|Chamber))",
@@ -46,20 +97,17 @@ def extract_clinic(text: str, name: str, city: str) -> str:
     return ""
 
 
-def extract_hospitals(text: str) -> list:
-    """Try to extract hospital affiliations from text."""
-    hospitals = []
+def extract_hospitals(text):
     patterns = [
         r"(?:affiliated?|associated|attached|works?\s+at|visits?)\s+(?:with\s+)?([A-Z][A-Za-z\s&'.,-]{3,50}(?:Hospital|Medical|Institute|Centre|Center))",
     ]
+    hospitals = []
     for pattern in patterns:
-        matches = re.findall(pattern, text, re.IGNORECASE)
-        hospitals.extend(m.strip() for m in matches)
-    return list(set(hospitals)) if hospitals else []
+        hospitals.extend(m.strip() for m in re.findall(pattern, text, re.IGNORECASE))
+    return list(set(hospitals))
 
 
-def extract_visit_time(text: str) -> str:
-    """Try to extract best visit / OPD timing from text."""
+def extract_visit_time(text):
     patterns = [
         r"(?:OPD|visiting|consultation|available|timing)[:\s]+(\d{1,2}[\s:.-]*(?:am|pm|AM|PM)[\s]*(?:to|-)[\s]*\d{1,2}[\s:.-]*(?:am|pm|AM|PM))",
         r"(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm)\s*(?:to|-)\s*\d{1,2}:\d{2}\s*(?:AM|PM|am|pm))",
@@ -71,8 +119,7 @@ def extract_visit_time(text: str) -> str:
     return ""
 
 
-def extract_nmc_registration(text: str) -> str:
-    """Try to extract NMC / MCI registration number."""
+def extract_nmc_registration(text):
     patterns = [
         r"(?:registration|reg\.?\s*(?:no|number|#)|NMC|MCI)[:\s]+([A-Z]{2,5}[-/]?\d{3,10})",
         r"\b([A-Z]{2,4}[-/]\d{4,10})\b",
@@ -84,10 +131,7 @@ def extract_nmc_registration(text: str) -> str:
     return ""
 
 
-def parse_search_results(
-    name: str, city: str, specialty: str, search_results: dict
-) -> dict:
-    """Parse pre-fetched search results into a structured doctor profile."""
+def parse_search_results(name, city, specialty, search_results):
     all_text = " ".join(str(v) for v in search_results.values() if v)
 
     clinic = extract_clinic(all_text, name, city)
@@ -95,21 +139,17 @@ def parse_search_results(
     visit_time = extract_visit_time(all_text)
     nmc_reg = extract_nmc_registration(all_text)
 
-    # Build profile with whatever we could extract
     doctor = {
         "name": name,
         "specialty": specialty,
         "city": city,
-        "clinic": clinic if clinic else "Not found — ask MR for details",
-        "hospital_affiliations": hospitals if hospitals else [],
-        "best_visit_time": visit_time
-        if visit_time
-        else "Not found — ask MR for details",
+        "clinic": clinic or "Not found — ask MR",
+        "hospital_affiliations": hospitals,
+        "best_visit_time": visit_time or "Not found — ask MR",
         "prescribing_habits": "Not yet collected — gather from MR conversations",
-        "nmc_registration": nmc_reg if nmc_reg else "Not found — verify via NMC portal",
+        "nmc_registration": nmc_reg or "Not found — verify via NMC portal",
     }
 
-    # Determine confidence based on how many fields we extracted
     filled = sum(
         1
         for k in [
@@ -131,61 +171,61 @@ def parse_search_results(
     }
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Enrich a doctor's profile from search data or generate search queries."
-    )
+def main():
+    parser = argparse.ArgumentParser(description="Look up or enrich doctor profile.")
+    parser.add_argument("--name", required=True, help="Doctor name")
+    parser.add_argument("--city", required=True, help="City")
+    parser.add_argument("--specialty", required=True, help="Specialty")
     parser.add_argument(
-        "--name",
-        required=True,
-        help='Doctor name, e.g. "Dr. Rina Mukherjee"',
-    )
-    parser.add_argument(
-        "--city",
-        required=True,
-        help='City, e.g. "Kolkata"',
-    )
-    parser.add_argument(
-        "--specialty",
-        required=True,
-        help='Specialty, e.g. "Gynecologist"',
+        "--lookup",
+        action="store_true",
+        default=False,
+        help="Look up doctor in Google Sheet first, then suggest web search if not found",
     )
     parser.add_argument(
         "--generate-queries",
         action="store_true",
         default=False,
-        help="Return search queries for the agent to execute via web_search",
+        help="Return web search queries for the agent",
     )
     parser.add_argument(
         "--search-results",
         type=str,
         default=None,
-        help="JSON string of pre-fetched search results to parse into a profile",
+        help="JSON string of pre-fetched search results to parse",
     )
-
     args = parser.parse_args()
 
     try:
-        if args.generate_queries:
+        if args.lookup:
+            sheet_result, sheet_err = lookup_from_sheet(
+                args.name, args.city, args.specialty
+            )
+            if sheet_result:
+                result = sheet_result
+            else:
+                result = {
+                    "status": "not_found_in_sheet",
+                    "message": f"Doctor '{args.name}' not in sheet. Use web_search or ask the MR.",
+                    "suggested_queries": generate_queries(
+                        args.name, args.city, args.specialty
+                    )["queries"],
+                    "doctor": args.name,
+                }
+        elif args.generate_queries:
             result = generate_queries(args.name, args.city, args.specialty)
         elif args.search_results:
             try:
                 search_data = json.loads(args.search_results)
             except json.JSONDecodeError as exc:
                 print(
-                    json.dumps(
-                        {
-                            "status": "error",
-                            "message": f"Invalid JSON in --search-results: {exc}",
-                        }
-                    )
+                    json.dumps({"status": "error", "message": f"Invalid JSON: {exc}"})
                 )
                 return 1
             result = parse_search_results(
                 args.name, args.city, args.specialty, search_data
             )
         else:
-            # Default: generate queries so the agent knows what to search
             result = generate_queries(args.name, args.city, args.specialty)
 
         print(json.dumps(result, ensure_ascii=False))

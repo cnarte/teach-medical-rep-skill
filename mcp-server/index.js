@@ -84,16 +84,16 @@ server.tool(
 
 server.tool(
   "get_doctor_info",
-  "Get search queries for enriching a doctor's profile, or parse search results into structured doctor data",
+  "Look up doctor in Google Sheet, generate web search queries, or parse search results into structured profile",
   {
     name: z.string().describe("Doctor's full name"),
     city: z.string().describe("City where the doctor practices"),
     specialty: z.string().describe("Doctor's medical specialty"),
     mode: z
-      .enum(["generate-queries", "parse-results"])
+      .enum(["lookup", "generate-queries", "parse-results"])
       .optional()
-      .default("generate-queries")
-      .describe('Operation mode: "generate-queries" to get search queries, "parse-results" to parse search results'),
+      .default("lookup")
+      .describe('Operation mode: "lookup" checks Google Sheet first then suggests web search, "generate-queries" for web search queries, "parse-results" to parse search results'),
     searchResults: z
       .string()
       .optional()
@@ -103,7 +103,9 @@ server.tool(
     try {
       const args = ["--name", name, "--city", city, "--specialty", specialty];
 
-      if (mode === "generate-queries") {
+      if (mode === "lookup") {
+        args.push("--lookup");
+      } else if (mode === "generate-queries") {
         args.push("--generate-queries");
       } else if (mode === "parse-results") {
         if (!searchResults) {
