@@ -1,224 +1,136 @@
 #!/usr/bin/env python3
 """
-Look up MR profile. Priority: Google Sheet → SQLite fallback.
+Look up MR profile via Emcure API.
 Usage: python3 scripts/get_mr_profile.py --phone "+919876543210"
+       python3 scripts/get_mr_profile.py --name "Somnath" --division "Pharma" --hq "Kolkata"
 """
 
 import argparse
 import json
 import os
 import re
-import sqlite3
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from sheets_config import read_sheet_csv, MR_SHEET_GID
-
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mr_database.db")
-
-SEED_DATA = [
-    {
-        "name": "Somnath",
-        "company": "Emcure",
-        "division": "Pharma",
-        "city": "Kolkata",
-        "doctors_per_month": 200,
-        "specialties": ["Gynecologist", "Consultant Physician"],
-        "brands": ["Orofer-XT", "Pause"],
-        "phone": "+919876543210",
-        "joining_date": "2023-06-15",
-        "region": "East",
-    },
-    {
-        "name": "Rahul Sharma",
-        "company": "Sun Pharma",
-        "division": "Cardiology",
-        "city": "Delhi",
-        "doctors_per_month": 150,
-        "specialties": ["Cardiologist", "GP"],
-        "brands": ["Amlodipine", "Telmisartan"],
-        "phone": "+919876543211",
-        "joining_date": "2022-03-01",
-        "region": "North",
-    },
-    {
-        "name": "Subramaniam K",
-        "company": "Cipla",
-        "division": "Respiratory",
-        "city": "Chennai",
-        "doctors_per_month": 120,
-        "specialties": ["Pulmonologist", "GP"],
-        "brands": ["Foracort", "Duolin"],
-        "phone": "+919876543212",
-        "joining_date": "2021-11-20",
-        "region": "South",
-    },
-    {
-        "name": "Priya Patil",
-        "company": "Dr. Reddy's",
-        "division": "Dermatology",
-        "city": "Mumbai",
-        "doctors_per_month": 180,
-        "specialties": ["Dermatologist", "GP"],
-        "brands": ["Cetaphil", "Ivermectin"],
-        "phone": "+919876543213",
-        "joining_date": "2024-01-10",
-        "region": "West",
-    },
-    {
-        "name": "Ankit Patel",
-        "company": "Torrent",
-        "division": "Diabetology",
-        "city": "Ahmedabad",
-        "doctors_per_month": 160,
-        "specialties": ["Endocrinologist", "GP"],
-        "brands": ["Glimepiride", "Metformin"],
-        "phone": "+919939086064",
-        "joining_date": "2023-09-05",
-        "region": "West",
-    },
-    {
-        "name": "Saurabh Moody",
-        "company": "Dr. Reddy's",
-        "division": "Oncology",
-        "city": "Noida",
-        "doctors_per_month": 90,
-        "specialties": ["Oncologist", "Hematologist"],
-        "brands": ["Grafeel", "Cresp"],
-        "phone": "+14088278101",
-        "joining_date": "2024-03-01",
-        "region": "North",
-    },
-]
+from emcure_api import get_employee_metrics, get_employee_brands
 
 
 def normalize_phone(phone):
     return re.sub(r"[^+\d]", "", phone)
 
 
-def lookup_from_sheet(phone):
-    if not MR_SHEET_GID:
-        return None, "MR sheet tab GID not configured"
+def _extract_profile_from_api(metrics_result, brands_result, phone=None):
+    """
+    Parse Emcure API NL-to-DAX responses into standard profile format.
+    Handles both dict and list response shapes since the API structure varies.
+    """
+    profile = {}
 
-    rows, err = read_sheet_csv(gid=MR_SHEET_GID)
-    if err or rows is None:
-        return None, f"Sheet read failed: {err}"
-
-    phone_clean = normalize_phone(phone)
-    for row in rows:
-        row_phone = normalize_phone(row.get("Phone", row.get("phone", "")))
-        if row_phone == phone_clean:
-            specialties = [
-                s.strip()
-                for s in row.get("Specialties", row.get("specialties", "")).split(",")
-                if s.strip()
-            ]
-            brands = [
-                b.strip()
-                for b in row.get("Brands", row.get("brands", "")).split(",")
-                if b.strip()
-            ]
-            return {
-                "status": "found",
-                "source": "google_sheet",
-                "profile": {
-                    "name": row.get("Name", row.get("name", "")),
-                    "company": row.get("Company", row.get("company", "")),
-                    "division": row.get("Division", row.get("division", "")),
-                    "city": row.get("City", row.get("city", "")),
-                    "doctors_per_month": int(
-                        row.get("Doctors Per Month", row.get("doctors_per_month", 0))
-                        or 0
-                    ),
-                    "specialties": specialties,
-                    "brands": brands,
-                    "phone": row.get("Phone", row.get("phone", "")),
-                    "joining_date": row.get(
-                        "Joining Date", row.get("joining_date", "")
-                    ),
-                    "region": row.get("Region", row.get("region", "")),
-                },
-            }, None
-    return None, "Not found in sheet"
-
-
-def init_db(conn):
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS mr_profiles (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL, company TEXT NOT NULL, division TEXT NOT NULL,
-            city TEXT NOT NULL, doctors_per_month INTEGER NOT NULL,
-            specialties TEXT NOT NULL, brands TEXT NOT NULL,
-            phone TEXT UNIQUE NOT NULL, joining_date TEXT NOT NULL, region TEXT NOT NULL
-        )
-    """)
-    conn.commit()
-    if conn.execute("SELECT COUNT(*) FROM mr_profiles").fetchone()[0] == 0:
-        for mr in SEED_DATA:
-            conn.execute(
-                "INSERT INTO mr_profiles (name,company,division,city,doctors_per_month,specialties,brands,phone,joining_date,region) VALUES (?,?,?,?,?,?,?,?,?,?)",
-                (
-                    mr["name"],
-                    mr["company"],
-                    mr["division"],
-                    mr["city"],
-                    mr["doctors_per_month"],
-                    json.dumps(mr["specialties"]),
-                    json.dumps(mr["brands"]),
-                    mr["phone"],
-                    mr["joining_date"],
-                    mr["region"],
-                ),
+    if metrics_result.get("status") == "success" and metrics_result.get("result"):
+        data = metrics_result["result"]
+        if isinstance(data, list) and len(data) > 0:
+            row = data[0]
+            profile["name"] = row.get("employee", row.get("Employee", ""))
+            profile["designation"] = row.get("designation", row.get("Designation", ""))
+            profile["l1_employee"] = row.get("l1 employee", row.get("L1 Employee", ""))
+            profile["doctors_per_month"] = row.get(
+                "total doctors", row.get("Total Doctors", 0)
             )
-        conn.commit()
+            profile["met"] = row.get("met", row.get("Met", 0))
+            profile["visits"] = row.get("visit", row.get("Visit", 0))
+            profile["coverage"] = row.get("coverage", row.get("Coverage", ""))
+        elif isinstance(data, dict):
+            profile["name"] = data.get("employee", data.get("Employee", ""))
+            profile["designation"] = data.get(
+                "designation", data.get("Designation", "")
+            )
+            profile["doctors_per_month"] = data.get(
+                "total doctors", data.get("Total Doctors", 0)
+            )
+            profile["coverage"] = data.get("coverage", data.get("Coverage", ""))
 
+    brands_list = []
+    if brands_result.get("status") == "success" and brands_result.get("result"):
+        data = brands_result["result"]
+        if isinstance(data, list):
+            for row in data:
+                brand = row.get("brand", row.get("Brand", row.get("brands", "")))
+                if brand:
+                    brands_list.append(brand)
+        elif isinstance(data, dict):
+            for val in data.values():
+                if val and isinstance(val, str):
+                    brands_list.append(val)
 
-def lookup_from_sqlite(phone):
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    try:
-        init_db(conn)
-        row = conn.execute(
-            "SELECT * FROM mr_profiles WHERE phone = ?", (phone,)
-        ).fetchone()
-        if row is None:
-            return {"status": "not_found", "phone": phone}
+    if profile.get("name"):
         return {
             "status": "found",
-            "source": "sqlite",
+            "source": "emcure_api",
             "profile": {
-                "name": row["name"],
-                "company": row["company"],
-                "division": row["division"],
-                "city": row["city"],
-                "doctors_per_month": row["doctors_per_month"],
-                "specialties": json.loads(row["specialties"]),
-                "brands": json.loads(row["brands"]),
-                "phone": row["phone"],
-                "joining_date": row["joining_date"],
-                "region": row["region"],
+                "name": profile.get("name", ""),
+                "designation": profile.get("designation", ""),
+                "l1_employee": profile.get("l1_employee", ""),
+                "doctors_per_month": profile.get("doctors_per_month", 0),
+                "met": profile.get("met", 0),
+                "visits": profile.get("visits", 0),
+                "coverage": profile.get("coverage", ""),
+                "brands": brands_list,
+                "phone": phone or "",
             },
         }
-    finally:
-        conn.close()
+    return None
 
 
-def lookup_profile(phone):
-    sheet_result, sheet_err = lookup_from_sheet(phone)
-    if sheet_result:
-        return sheet_result
-    return lookup_from_sqlite(phone)
+def lookup_from_api(name, division=None, hq=None, phone=None):
+    try:
+        metrics = get_employee_metrics(name, division, hq)
+        if metrics.get("status") == "manual_login_required":
+            return metrics, None
+        brands = get_employee_brands(name, division, hq)
+        if brands.get("status") == "manual_login_required":
+            return brands, None
+        result = _extract_profile_from_api(metrics, brands, phone)
+        if result:
+            return result, None
+        return None, "Employee not found in API response"
+    except Exception as e:
+        return None, f"API lookup failed: {e}"
+
+
+def lookup_profile(phone=None, name=None, division=None, hq=None):
+    if name:
+        api_result, api_err = lookup_from_api(name, division, hq, phone)
+        if api_result:
+            return api_result
+        return {"status": "not_found", "name": name, "error": api_err}
+
+    if phone:
+        return {
+            "status": "not_found",
+            "phone": normalize_phone(phone),
+            "message": "Phone-only lookup requires --name. Provide the MR's name for API query.",
+        }
+
+    return {
+        "status": "error",
+        "message": "Provide --name (and optionally --phone, --division, --hq)",
+    }
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Look up MR profile by phone number.")
+    parser = argparse.ArgumentParser(description="Look up MR profile via Emcure API.")
+    parser.add_argument("--phone", help='Phone in E.164 format, e.g. "+919876543210"')
     parser.add_argument(
-        "--phone", required=True, help='Phone in E.164 format, e.g. "+919876543210"'
+        "--name", required=True, help="Employee name for Emcure API lookup"
     )
+    parser.add_argument("--division", help="Division filter for API")
+    parser.add_argument("--hq", help="HQ/city filter for API")
     args = parser.parse_args()
 
     try:
-        result = lookup_profile(args.phone)
+        result = lookup_profile(
+            phone=args.phone, name=args.name, division=args.division, hq=args.hq
+        )
         print(json.dumps(result, ensure_ascii=False))
         return 0
     except Exception as exc:

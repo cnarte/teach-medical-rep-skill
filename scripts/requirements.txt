@@ -1,1 +1,2 @@
-gspread>=6.0.0
+# No external dependencies required.
+# All scripts use Python stdlib only (urllib, json, etc.)

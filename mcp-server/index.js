@@ -9,10 +9,6 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const SCRIPTS_DIR = path.resolve(__dirname, "..", "scripts");
 
-/**
- * Run a Python script with arguments and return its stdout.
- * Rejects on non-zero exit or stderr-only output.
- */
 function runPython(scriptName, args) {
   return new Promise((resolve, reject) => {
     const scriptPath = path.join(SCRIPTS_DIR, scriptName);
@@ -30,7 +26,6 @@ function runPython(scriptName, args) {
 
     proc.stderr.on("data", (chunk) => {
       stderr += chunk.toString();
-      // Forward Python stderr to our stderr (not stdout — that's MCP protocol)
       process.stderr.write(chunk);
     });
 
@@ -52,25 +47,60 @@ function runPython(scriptName, args) {
   });
 }
 
-// ── Server setup ──────────────────────────────────────────────────────────────
+function parseAndCheckLoginRequired(raw) {
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed.status === "manual_login_required") {
+      return {
+        loginRequired: true,
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: "manual_login_required",
+            action: "Please log into the Emcure Super AI web portal to activate API access, then retry.",
+            message: parsed.message,
+          }),
+        }],
+      };
+    }
+    return { loginRequired: false };
+  } catch {
+    return { loginRequired: false };
+  }
+}
 
 const server = new McpServer({
   name: "medical-rep-tools",
-  version: "1.0.0",
+  version: "2.0.0",
 });
-
-// ── Tool 1: get_mr_profile ────────────────────────────────────────────────────
 
 server.tool(
   "get_mr_profile",
-  "Look up a pharmaceutical medical representative's profile from the database using their phone number",
+  "Look up a pharmaceutical MR's profile from the Emcure API using their name, division, and HQ.",
   {
-    phone: z.string().describe("Phone number in E.164 format, e.g. +919876543210"),
+    phone: z.string().optional().describe("Phone number in E.164 format (stored with profile, not used for lookup)"),
+    name: z.string().describe("Employee name for Emcure API lookup"),
+    division: z.string().optional().describe("Division filter for API query"),
+    hq: z.string().optional().describe("HQ/city filter for API query"),
   },
-  async ({ phone }) => {
+  async ({ phone, name, division, hq }) => {
     try {
-      const result = await runPython("get_mr_profile.py", ["--phone", phone]);
-      return { content: [{ type: "text", text: result }] };
+      if (!name) {
+        return {
+          content: [{ type: "text", text: "Error: name is required" }],
+          isError: true,
+        };
+      }
+
+      const args = ["--name", name];
+      if (phone) args.push("--phone", phone);
+      if (division) args.push("--division", division);
+      if (hq) args.push("--hq", hq);
+
+      const raw = await runPython("get_mr_profile.py", args);
+      const check = parseAndCheckLoginRequired(raw);
+      if (check.loginRequired) return { content: check.content };
+      return { content: [{ type: "text", text: raw }] };
     } catch (err) {
       return {
         content: [{ type: "text", text: `Error: ${err.message}` }],
@@ -80,28 +110,33 @@ server.tool(
   }
 );
 
-// ── Tool 2: get_doctor_info ───────────────────────────────────────────────────
-
 server.tool(
   "get_doctor_info",
-  "Look up doctor in Google Sheet, generate web search queries, or parse search results into structured profile",
+  "Look up doctor in Emcure API visit/missed data, generate web search queries, or parse search results into a structured profile",
   {
     name: z.string().describe("Doctor's full name"),
     city: z.string().describe("City where the doctor practices"),
     specialty: z.string().describe("Doctor's medical specialty"),
+    mrName: z.string().optional().describe("MR employee name (needed for API lookup to find doctor in MR's visit data)"),
+    division: z.string().optional().describe("Division filter for API query"),
+    hq: z.string().optional().describe("HQ/city filter for API query"),
     mode: z
       .enum(["lookup", "generate-queries", "parse-results"])
       .optional()
       .default("lookup")
-      .describe('Operation mode: "lookup" checks Google Sheet first then suggests web search, "generate-queries" for web search queries, "parse-results" to parse search results'),
+      .describe('"lookup" checks Emcure API then suggests web search, "generate-queries" for web search queries, "parse-results" to parse search results'),
     searchResults: z
       .string()
       .optional()
       .describe("Raw search results text to parse (required when mode is parse-results)"),
   },
-  async ({ name, city, specialty, mode, searchResults }) => {
+  async ({ name, city, specialty, mrName, division, hq, mode, searchResults }) => {
     try {
       const args = ["--name", name, "--city", city, "--specialty", specialty];
+
+      if (mrName) args.push("--mr-name", mrName);
+      if (division) args.push("--division", division);
+      if (hq) args.push("--hq", hq);
 
       if (mode === "lookup") {
         args.push("--lookup");
@@ -122,8 +157,10 @@ server.tool(
         args.push("--search-results", searchResults);
       }
 
-      const result = await runPython("get_doctor_info.py", args);
-      return { content: [{ type: "text", text: result }] };
+      const raw = await runPython("get_doctor_info.py", args);
+      const check = parseAndCheckLoginRequired(raw);
+      if (check.loginRequired) return { content: check.content };
+      return { content: [{ type: "text", text: raw }] };
     } catch (err) {
       return {
         content: [{ type: "text", text: `Error: ${err.message}` }],
@@ -132,8 +169,6 @@ server.tool(
     }
   }
 );
-
-// ── Tool 3: update_doctor ─────────────────────────────────────────────────────
 
 server.tool(
   "update_doctor",
@@ -152,15 +187,9 @@ server.tool(
     try {
       const args = ["--doctor", doctor];
 
-      if (field) {
-        args.push("--field", field);
-      }
-      if (value) {
-        args.push("--value", value);
-      }
-      if (notes) {
-        args.push("--notes", notes);
-      }
+      if (field) args.push("--field", field);
+      if (value) args.push("--value", value);
+      if (notes) args.push("--notes", notes);
 
       const resolvedMemory =
         memoryFile || path.join(process.env.HOME || "~", ".openclaw", "workspace", "MEMORY.md");
@@ -177,12 +206,45 @@ server.tool(
   }
 );
 
-// ── Start server ──────────────────────────────────────────────────────────────
+server.tool(
+  "query_emcure_api",
+  "Direct query to Emcure API for employee metrics, doctor visits, missed doctors, brands, or employee lists",
+  {
+    query: z
+      .enum(["employee_metrics", "doctor_visits", "missed_doctors", "employee_brands", "get_employees"])
+      .describe("Type of data to query from the Emcure API"),
+    name: z.string().optional().describe("Employee name (required for most queries)"),
+    division: z.string().optional().describe("Division filter"),
+    hq: z.string().optional().describe("HQ/city filter"),
+    month: z.string().optional().describe("Month name, e.g. January (default: current month)"),
+    year: z.string().optional().describe("Year, e.g. 2025 (default: current year)"),
+  },
+  async ({ query, name, division, hq, month, year }) => {
+    try {
+      const args = ["--query", query];
+      if (name) args.push("--name", name);
+      if (division) args.push("--division", division);
+      if (hq) args.push("--hq", hq);
+      if (month) args.push("--month", month);
+      if (year) args.push("--year", year);
+
+      const raw = await runPython("emcure_api.py", args);
+      const check = parseAndCheckLoginRequired(raw);
+      if (check.loginRequired) return { content: check.content };
+      return { content: [{ type: "text", text: raw }] };
+    } catch (err) {
+      return {
+        content: [{ type: "text", text: `Error: ${err.message}` }],
+        isError: true,
+      };
+    }
+  }
+);
 
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  process.stderr.write("medical-rep-tools MCP server running on stdio\n");
+  process.stderr.write("medical-rep-tools MCP server v2.0.0 running on stdio\n");
 }
 
 main().catch((err) => {

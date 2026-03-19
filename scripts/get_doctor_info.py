@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Doctor info lookup. Priority: Google Sheet → web search queries → ask MR.
+Doctor info lookup. Priority: Emcure API → web search queries → ask MR.
 Also parses web search results into structured profiles.
 
 Usage:
-    python3 get_doctor_info.py --name "ALKA . SEN" --city "Kolkata" --specialty "Gynecologist" --lookup
+    python3 get_doctor_info.py --name "ALKA SEN" --city "Kolkata" --specialty "Gynecologist" --mr-name "Somnath" --lookup
     python3 get_doctor_info.py --name "Dr. X" --city "Kolkata" --specialty "GP" --generate-queries
     python3 get_doctor_info.py --name "Dr. X" --city "Kolkata" --specialty "GP" --search-results '{"practo": "..."}'
 """
@@ -16,60 +16,76 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from sheets_config import read_sheet_csv, DOCTOR_SHEET_GID
+from emcure_api import lookup_doctor_by_name
 
 
 def normalize_name(name):
     return re.sub(r"[\s.]+", " ", name).strip().upper()
 
 
-def lookup_from_sheet(name, city=None, specialty=None):
-    rows, err = read_sheet_csv(gid=DOCTOR_SHEET_GID)
-    if err or rows is None:
-        return None, f"Sheet read failed: {err}"
+def _extract_doctor_from_api(api_result):
+    """
+    Convert Emcure API doctor data into standard profile format.
+    The API returns visit rows or missed-doctor rows with different field names.
+    """
+    if api_result.get("status") != "found":
+        return None
 
-    name_norm = normalize_name(name)
-    matches = []
+    data = api_result.get("data", {})
+    source = api_result.get("source", "emcure_api")
 
-    for row in rows:
-        row_name = normalize_name(row.get("Doctor", ""))
-        if name_norm == row_name or name_norm in row_name or row_name in name_norm:
-            matches.append(row)
-
-    if not matches:
-        return None, "Not found in doctor sheet"
-
-    # Deduplicate — same doctor has multiple visit rows. Take first for profile, aggregate visits.
-    first = matches[0]
-    visit_dates = sorted(
-        set(
-            row.get("Visit Date", "").split("T")[0]
-            for row in matches
-            if row.get("Visit Date")
-        )
-    )
-
-    doctor = {
-        "name": first.get("Doctor", ""),
-        "specialty": first.get("Speciality", ""),
-        "qualification": first.get("Qualification", ""),
-        "potential": first.get("Potential", ""),
-        "city": first.get("Area Patch", city or ""),
-        "frequency": first.get("Frequency Name", ""),
-        "total_visits_in_data": len(matches),
-        "recent_visit_dates": visit_dates[-5:],
-        "clinic": "",
-        "hospital_affiliations": [],
-        "best_visit_time": "",
-        "prescribing_habits": "",
-    }
+    if isinstance(data, dict):
+        doctor = {
+            "name": data.get(
+                "doctor name", data.get("Doctor Name", data.get("doctor", ""))
+            ),
+            "specialty": data.get("speciality", data.get("Speciality", "")),
+            "qualification": data.get("qualification", data.get("Qualification", "")),
+            "potential": data.get("potential", data.get("Potential", "")),
+            "city": data.get("area", data.get("Area", data.get("city", ""))),
+            "frequency": data.get("frequency", data.get("Frequency", "")),
+            "visit_date": data.get("visit date", data.get("Visit Date", "")),
+            "clinic": "",
+            "hospital_affiliations": [],
+            "best_visit_time": "",
+            "prescribing_habits": "",
+        }
+    elif isinstance(data, list) and len(data) > 0:
+        row = data[0] if isinstance(data[0], dict) else {}
+        doctor = {
+            "name": row.get("doctor name", row.get("Doctor Name", "")),
+            "specialty": row.get("speciality", row.get("Speciality", "")),
+            "qualification": row.get("qualification", row.get("Qualification", "")),
+            "potential": row.get("potential", row.get("Potential", "")),
+            "city": row.get("area", row.get("Area", "")),
+            "frequency": row.get("frequency", row.get("Frequency", "")),
+            "visit_date": row.get("visit date", row.get("Visit Date", "")),
+            "clinic": "",
+            "hospital_affiliations": [],
+            "best_visit_time": "",
+            "prescribing_habits": "",
+        }
+    else:
+        return None
 
     return {
         "status": "found",
-        "source": "google_sheet",
+        "source": source,
         "confidence": "high",
         "doctor": doctor,
-    }, None
+    }
+
+
+def lookup_from_api(doctor_name, mr_name, division=None, hq=None):
+    try:
+        api_result = lookup_doctor_by_name(doctor_name, mr_name, division, hq)
+        if api_result.get("status") == "manual_login_required":
+            return api_result, None
+        if api_result.get("status") == "found":
+            return _extract_doctor_from_api(api_result), None
+        return None, api_result.get("message", "Not found in API")
+    except Exception as e:
+        return None, f"API lookup failed: {e}"
 
 
 def generate_queries(name, city, specialty):
@@ -176,11 +192,14 @@ def main():
     parser.add_argument("--name", required=True, help="Doctor name")
     parser.add_argument("--city", required=True, help="City")
     parser.add_argument("--specialty", required=True, help="Specialty")
+    parser.add_argument("--mr-name", help="MR employee name (for API lookup)")
+    parser.add_argument("--division", help="Division filter for API")
+    parser.add_argument("--hq", help="HQ/city filter for API")
     parser.add_argument(
         "--lookup",
         action="store_true",
         default=False,
-        help="Look up doctor in Google Sheet first, then suggest web search if not found",
+        help="Look up doctor in Emcure API first, then suggest web search if not found",
     )
     parser.add_argument(
         "--generate-queries",
@@ -198,15 +217,25 @@ def main():
 
     try:
         if args.lookup:
-            sheet_result, sheet_err = lookup_from_sheet(
-                args.name, args.city, args.specialty
-            )
-            if sheet_result:
-                result = sheet_result
+            if args.mr_name:
+                api_result, api_err = lookup_from_api(
+                    args.name, args.mr_name, args.division, args.hq
+                )
+                if api_result:
+                    result = api_result
+                else:
+                    result = {
+                        "status": "not_found_in_api",
+                        "message": f"Doctor '{args.name}' not in API data. Use web_search or ask the MR.",
+                        "suggested_queries": generate_queries(
+                            args.name, args.city, args.specialty
+                        )["queries"],
+                        "doctor": args.name,
+                    }
             else:
                 result = {
-                    "status": "not_found_in_sheet",
-                    "message": f"Doctor '{args.name}' not in sheet. Use web_search or ask the MR.",
+                    "status": "not_found_in_api",
+                    "message": "No --mr-name provided for API lookup. Use web_search or ask the MR.",
                     "suggested_queries": generate_queries(
                         args.name, args.city, args.specialty
                     )["queries"],

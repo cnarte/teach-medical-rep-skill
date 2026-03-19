@@ -4,4 +4,6 @@
 *~
 .env
 node_modules/
-scripts/mr_database.db
+scripts/.emcure_token_cache.json
+__pycache__/
+*.pyc

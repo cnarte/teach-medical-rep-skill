@@ -1,11 +1,19 @@
 # Testing Medical Rep Training Skills
 
-This document provides test scenarios for both the monolithic skill and the individual standalone skills.
+This document provides test scenarios for the standalone training skills backed by the Emcure API.
 
 Skills being tested:
-- `teach-medical-rep/` — Original monolithic skill (all 5 modes in one)
-- `field-coaching/` — Standalone Field Coaching Mode (hardened constraints)
-- More standalone skills coming: QnA, Objection Handler, Doctor Roleplay, Product Deep-dive
+- `field-coaching/` — Standalone Field Coaching Mode
+- `qna-mode/` — Product Knowledge QnA
+- `objection-handler/` — Objection Handling Practice
+- `doctor-roleplay/` — Doctor Call Roleplay
+- `product-deepdive/` — Product Deep-dive Mode
+- `language-engine/` — Always-on language detection and calibration
+- `mr-profile-loader/` — Always-on MR profile auto-loader
+
+Data sources:
+- Emcure Super AI Data Apps API (primary) for employee metrics, doctor visits, missed doctors, brands
+- web_search (for medical info and doctors not in API data)
 
 ---
 
@@ -14,14 +22,8 @@ Skills being tested:
 ### Install into OpenClaw
 
 ```bash
-# Monolithic skill
-cp -r teach-medical-rep ~/.openclaw/skills/
-
-# Standalone Field Coaching skill
-cp -r field-coaching ~/.openclaw/skills/
-
-# Or copy all skills at once
-for skill in teach-medical-rep field-coaching; do
+# Copy all standalone skills
+for skill in field-coaching qna-mode objection-handler doctor-roleplay product-deepdive language-engine mr-profile-loader; do
   cp -r "$skill" ~/.openclaw/skills/
 done
 ```
@@ -47,15 +49,10 @@ Ensure these are configured in `~/.openclaw/openclaw.json`:
 
 Send this to your agent:
 ```
-/teach-medical-rep
-```
-
-Or ask naturally:
-```
 I need help training a medical rep
 ```
 
-The agent should read the SKILL.md and begin the profile collection flow.
+The agent should auto-load the MR profile (mr-profile-loader), detect language (language-engine), and begin the relevant training flow.
 
 ---
 

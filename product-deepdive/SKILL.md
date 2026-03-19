@@ -79,6 +79,8 @@ If no Language Profile exists in memory, use Hindi-English in Roman script as de
 
 Medical and clinical terms ALWAYS stay in English regardless of language settings: efficacy, bioavailability, hemoglobin, compliance, MOA, pharmacokinetics. Brand names exactly as branded: Orofer-XT not "orofer xt." Business terms in English: MRP, PTR, RCPA.
 
+NOTE — ALL LANGUAGES: The WRONG/RIGHT examples in this skill use Hindi-English for illustration. The same teaching rules apply in Tamil-English, Bengali-English, Kannada-English, Telugu-English, Marathi-English, Gujarati-English, Malayalam-English, and all other regional-English blends. Plain conversational sentences, 4 max, no markdown — in any language.
+
 ---
 
 # WORKFLOW
@@ -90,10 +92,23 @@ FIRST ACTION every session. Non-negotiable.
 Call `memory_search` with the MR's name AND the product they are asking about.
 
 MR FOUND + PRODUCT FOUND: Greet by name. Tell them you have their previous deep-dive on file. Ask which aspect they want to revisit or if they want a new product.
-MR FOUND + PRODUCT NOT FOUND: Greet by name. Proceed to Step 3 with the new product.
-MR NOT FOUND: Go to Step 2.
+MR FOUND + PRODUCT NOT FOUND: Greet by name. Go to Step 2 to load their brand list.
+MR NOT FOUND: Go to Step 3.
 
-## Step 2 — Collect Profile (new MR only)
+## Step 2 — Load Brand Context + Select Product
+
+If the MR hasn't named a specific product, fetch their brand assignments so you can offer relevant choices:
+
+Call exec:
+```
+python3 scripts/emcure_api.py --query employee_brands --name "{mr_name}" --division "{division}" --hq "{city}"
+```
+
+Present the options conversationally: "Kaunse product ka deep-dive karna hai — {brand1} ya {brand2}?" (adapt to their language)
+
+If returns `status: manual_login_required`: use brands from persistent profile memory. If MR already named the product, skip directly to Step 4.
+
+## Step 3 — Collect Profile (new MR only)
 
 Ask conversationally for: name, company, division, city, doctors per month, key specialties, key brands. Do not present this as a form. Chat naturally. "Pehle bata — kaunsi company, kaunsa city, kitne doctors milte hain monthly?"
 
@@ -107,7 +122,7 @@ Specialties: {list}
 Brands: {list}
 First session: {date}
 
-## Step 3 — Deep-dive Conversation
+## Step 4 — Deep-dive Conversation
 
 Send reaction using `message` tool with `react` action and "📚" emoji to signal you are preparing material. Deliver the deep-dive in 5 parts, one message per part.
 
@@ -121,7 +136,7 @@ Part 4 — What will doctors ask? Call `web_search("{brand} adverse effects safe
 
 Part 5 — Competitor landscape. Call `web_search("{brand} vs {competitor} comparison")`. Key differentiators, evidence-based only. "Agar doctor bole {competitor} better hai, toh bolo: '{response}'" Ask: "Deep-dive complete. Quiz time?"
 
-## Step 4 — Quiz
+## Step 5 — Quiz
 
 Use `message` tool with `poll` action. Create a question about the product just covered. Provide 4 options: 1 correct, 3 plausible wrong answers.
 
@@ -129,7 +144,7 @@ Example: "Quick test! Orofer-XT ka key molecule kya hai?" Options: Ferrous Ascor
 
 If the MR answers correctly, congratulate and reinforce. If wrong, re-teach that specific point immediately.
 
-## Step 5 — Log to Memory
+## Step 6 — Log to Memory
 
 Save product data to MEMORY.md:
 
@@ -153,12 +168,13 @@ Follow-up: {next product or topic}
 
 # TOOLS — WHEN TO USE EACH
 
-memory_search → Every session start. Search MR's name AND product name.
-web_search → Every product detail: composition, MOA, trials, competitors, price. Never skip.
-web_fetch → When search finds a detailed monograph or study URL worth extracting.
+exec → emcure_api.py (employee_brands): Step 2 — load the MR's brand list to offer product selection. This is the ONLY API call in this skill.
+memory_search → Session start. Search MR's name AND product name. Loads both profile and any prior deep-dive data.
+web_search → PRIMARY data source for ALL product content: composition, MOA, clinical trials, competitor comparisons, pricing, safety profile. web_search is not a fallback here — it is the source. Always call it before each part.
+web_fetch → When search finds a detailed monograph, clinical study PDF, or drug database URL worth extracting.
 message with react → React 📚 when MR asks for a deep-dive to signal preparation.
 message with poll → Quiz after completing deep-dive. Always.
-Write to MEMORY.md → New MR profile + product data after deep-dive.
+Write to MEMORY.md → New MR profile (Step 3) + product data block after each completed deep-dive.
 Write to memory/YYYY-MM-DD.md → Deep-dive session log after every session.
 
 ---
