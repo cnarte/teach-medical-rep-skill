@@ -143,7 +143,7 @@ exec → python3 ~/.openclaw/workspace/scripts/get_mr_profile.py: first session 
 exec → python3 ~/.openclaw/workspace/scripts/emcure_api.py --query employee_metrics: field coaching session context.
 exec → python3 ~/.openclaw/workspace/scripts/emcure_api.py --query missed_doctors: field coaching missed doctor list.
 exec → python3 ~/.openclaw/workspace/scripts/emcure_api.py --query doctor_visits: doctor roleplay persona selection, doctor engagement context.
-exec → python3 ~/.openclaw/workspace/scripts/emcure_api.py --query employee_brands: objection handler brand context, product deep-dive brand selection.
+exec → python3 ~/.openclaw/workspace/scripts/emcure_api.py --query employee_brands: objection handler brand context, product deep-dive brand selection. If current month returns empty, retry with --month "{prev_month}" --year "{prev_year}" (e.g., February 2026). See brand-search/SKILL.md for brand→specialty mapping.
 exec → python3 ~/.openclaw/workspace/scripts/get_doctor_info.py --lookup: when specific doctor named in any mode.
 exec → python3 ~/.openclaw/workspace/scripts/update_doctor.py: after doctor conversation notes collected.
 memory_search → every session start. Also before answering strategy questions (find past context).
@@ -166,6 +166,7 @@ Write to memory/YYYY-MM-DD.md → session logs for coaching, roleplay, objection
 | pharma-copilot (this file) | always-on, orchestrator | Entry point, routing, onboarding |
 | mr-profile-loader | always-on, silent | One-time API prefetch on first session |
 | language-engine | always-on | Language profile detection and maintenance |
+| brand-search | silent, helper | Fetch MR's assigned brands with prev-month fallback |
 | field-coaching | training | Territory, daily planning, coverage, RCPA |
 | doctor-roleplay | training | Simulate doctor visits, practice calls |
 | objection-handler | training | Handle doctor pushback, two-response method |
@@ -191,6 +192,8 @@ Write to memory/YYYY-MM-DD.md → session logs for coaching, roleplay, objection
 ├── language-engine/
 │   └── SKILL.md
 ├── mr-profile-loader/
+│   └── SKILL.md
+├── brand-search/
 │   └── SKILL.md
 ├── scripts/
 │   ├── emcure_api.py             ← Emcure API client (auth + 5 query types)
@@ -219,6 +222,24 @@ Tier 1 — Persistent (written once, never re-fetched):
 
 Tier 2 — Session context (fetched per session, used inline, NOT written to MEMORY.md):
 - employee_metrics, missed_doctors, doctor_visits, employee_brands
+
+## Brand → Specialty Mapping (Emcure Portfolio Quick Reference)
+
+Use this when matching products to doctors or handling objections:
+
+| Brand | Generic | Use Case | Doctor Specialty |
+|---|---|---|---|
+| PAUSE | Medroxyprogesterone | AUB, DUB, menstrual regulation | Gynecologist |
+| DYDROFEM | Dydrogesterone | Threatened abortion, luteal support | Gynecologist |
+| OROFER | Iron Sucrose / supplements | Iron deficiency anemia | Gynecologist, Physician |
+| FCMO | Iron + Folic Acid + Multivitamins | Anemia, pregnancy | Gynecologist, GP |
+| MVISTA | Multivitamins | General wellness, pregnancy | GP, Gynecologist |
+| VICARE | Respiratory formulation | Cough, cold, respiratory | Chest Physician, GP |
+
+When routing:
+- Gynec objection/pitch → PAUSE, DYDROFEM, OROFER, FCMO
+- Chest Physician → VICARE
+- GP → FCMO, MVISTA, VICARE
 
 ---
 
