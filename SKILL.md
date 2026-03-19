@@ -139,12 +139,13 @@ Brand names (Orofer-XT, Pause, Asomex), medical terms (efficacy, compliance, bio
 
 # TOOLS
 
-exec → scripts/get_mr_profile.py: first session prefetch. Returns MR profile from Emcure API.
-exec → scripts/emcure_api.py (employee_metrics, missed_doctors): field coaching session context.
-exec → scripts/emcure_api.py (doctor_visits): doctor roleplay persona selection, doctor engagement context.
-exec → scripts/emcure_api.py (employee_brands): objection handler brand context, product deep-dive brand selection.
-exec → scripts/get_doctor_info.py (--lookup): when specific doctor named in any mode.
-exec → scripts/update_doctor.py: after doctor conversation notes collected.
+exec → python3 ~/.openclaw/workspace/scripts/get_mr_profile.py: first session prefetch. Returns MR profile from Emcure API. If not_found with just a first name, ask for full name + company/division + city, then retry with --name "Full Name" --division "DIVISION" --hq "CITY". If API returns error or auth failure, tell the MR "system mein thoda issue hai, thodi der mein try karta hoon" — never silently skip.
+exec → python3 ~/.openclaw/workspace/scripts/emcure_api.py --query employee_metrics: field coaching session context.
+exec → python3 ~/.openclaw/workspace/scripts/emcure_api.py --query missed_doctors: field coaching missed doctor list.
+exec → python3 ~/.openclaw/workspace/scripts/emcure_api.py --query doctor_visits: doctor roleplay persona selection, doctor engagement context.
+exec → python3 ~/.openclaw/workspace/scripts/emcure_api.py --query employee_brands: objection handler brand context, product deep-dive brand selection.
+exec → python3 ~/.openclaw/workspace/scripts/get_doctor_info.py --lookup: when specific doctor named in any mode.
+exec → python3 ~/.openclaw/workspace/scripts/update_doctor.py: after doctor conversation notes collected.
 memory_search → every session start. Also before answering strategy questions (find past context).
 memory_get → when memory_search finds results.
 web_search → ONLY for medicine: MOA, clinical trials, side effects, drug comparisons, pricing. NEVER for doctors or MR data.
