@@ -34,10 +34,10 @@ def _extract_profile_from_api(metrics_result, brands_result, phone=None):
             profile["designation"] = row.get("designation", row.get("Designation", ""))
             profile["l1_employee"] = row.get("l1 employee", row.get("L1 Employee", ""))
             profile["doctors_per_month"] = row.get(
-                "total doctors", row.get("Total Doctors", 0)
+                "#Doctors", row.get("total doctors", row.get("Total Doctors", 0))
             )
-            profile["met"] = row.get("met", row.get("Met", 0))
-            profile["visits"] = row.get("visit", row.get("Visit", 0))
+            profile["met"] = row.get("Doctors Met", row.get("met", row.get("Met", 0)))
+            profile["visits"] = row.get("Doctor Visits", row.get("visit", row.get("Visit", 0)))
             profile["coverage"] = row.get("coverage", row.get("Coverage", ""))
         elif isinstance(data, dict):
             profile["name"] = data.get("employee", data.get("Employee", ""))
@@ -45,8 +45,10 @@ def _extract_profile_from_api(metrics_result, brands_result, phone=None):
                 "designation", data.get("Designation", "")
             )
             profile["doctors_per_month"] = data.get(
-                "total doctors", data.get("Total Doctors", 0)
+                "#Doctors", data.get("total doctors", data.get("Total Doctors", 0))
             )
+            profile["met"] = data.get("Doctors Met", data.get("met", data.get("Met", 0)))
+            profile["visits"] = data.get("Doctor Visits", data.get("visit", data.get("Visit", 0)))
             profile["coverage"] = data.get("coverage", data.get("Coverage", ""))
 
     brands_list = []
@@ -92,10 +94,25 @@ def lookup_from_api(name, division=None, hq=None, phone=None):
         if brands.get("status") == "manual_login_required":
             return brands, None
         result = _extract_profile_from_api(metrics, brands, phone)
+        
+        # If brands empty, try previous month for brands only
+        if result and not result.get("profile", {}).get("brands"):
+            now = datetime.now()
+            if now.month == 1:
+                prev_month, prev_year = "December", str(now.year - 1)
+            else:
+                prev_month = datetime(now.year, now.month - 1, 1).strftime("%B")
+                prev_year = str(now.year)
+            prev_brands = get_employee_brands(name, division, hq, month=prev_month, year=prev_year)
+            if prev_brands.get("status") == "success" and prev_brands.get("result"):
+                brands_list = [r.get("Brand", r.get("brand", "")) for r in prev_brands["result"] if r.get("Brand") or r.get("brand")]
+                if brands_list:
+                    result["profile"]["brands"] = brands_list
+        
         if result:
             return result, None
 
-        # Fallback: try previous month (current month may have incomplete data)
+        # Fallback: try previous month entirely (current month may have no data)
         now = datetime.now()
         if now.month == 1:
             prev_month, prev_year = "December", str(now.year - 1)
