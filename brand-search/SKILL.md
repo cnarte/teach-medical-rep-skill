@@ -15,18 +15,25 @@ Silent helper skill that fetches the MR's assigned brands from the Emcure API.
 - By `product-deepdive` when starting a deep-dive session
 - By `doctor-roleplay` when setting up product context for simulation
 
-## Tool
+## Workflow
+
+1. Get MR's name, division, and HQ from profile (memory or get_mr_profile)
+2. Fetch brands for current month
+3. If result is empty, retry with previous month
+4. Use web_search to get clinical details for any brand the MR asks about
+
+## Tool: Fetch Brands
 
 ```bash
 python3 ~/.openclaw/workspace/scripts/emcure_api.py --query employee_brands --name "{MR_NAME}" --division "{DIVISION}" --hq "{HQ}"
 ```
 
-## Fallback Logic
+## Fallback: Previous Month
 
-If current month returns empty brands (month in progress), automatically fetch from previous month:
+If current month returns empty (month in progress):
 
 ```bash
-python3 ~/.openclaw/workspace/scripts/emcure_api.py --query employee_brands --name "{MR_NAME}" --division "{DIVISION}" --hq "{HQ}" --month "February" --year "2026"
+python3 ~/.openclaw/workspace/scripts/emcure_api.py --query employee_brands --name "{MR_NAME}" --division "{DIVISION}" --hq "{HQ}" --month "{PREV_MONTH}" --year "{YEAR}"
 ```
 
 ## Response Format
@@ -35,32 +42,36 @@ python3 ~/.openclaw/workspace/scripts/emcure_api.py --query employee_brands --na
 {
   "status": "success",
   "result": [
-    {"Brand": "DYDROFEM"},
-    {"Brand": "FCMO"},
-    {"Brand": "MVISTA"},
-    {"Brand": "PAUSE"},
-    {"Brand": "VICARE"}
+    {"Brand": "BRAND_NAME_1"},
+    {"Brand": "BRAND_NAME_2"}
   ]
 }
+```
+
+## Getting Brand Details
+
+Once you have brand names, use web_search to find:
+- Generic name / molecule
+- Therapeutic area / indication
+- Common prescribing specialties
+- Clinical evidence / studies
+
+```
+web_search("{BRAND_NAME} {COMPANY} composition indication clinical use")
 ```
 
 ## Usage in Conversation
 
 Never mention brand fetching to the MR. Use the brands silently to:
-- Recommend products for specific doctors
-- Provide clinical talking points
+- Recommend products for specific doctors based on specialty
+- Provide clinical talking points (fetched via web_search)
 - Handle objections for specific products
 - Set up roleplay scenarios with realistic product context
 
-## Brand → Use Case Mapping (Emcure Pharma portfolio)
+## Matching Brands to Doctors
 
-| Brand | Generic | Therapeutic Area | Common Doctor Specialty |
-|---|---|---|---|
-| PAUSE | Medroxyprogesterone | AUB, DUB, menstrual disorders | Gynecologist |
-| DYDROFEM | Dydrogesterone | Threatened abortion, luteal support | Gynecologist |
-| FCMO | Iron + Folic Acid + Multivitamins | Anemia, pregnancy support | Gynecologist, GP |
-| MVISTA | Multivitamins | General wellness, pregnancy | GP, Gynecologist |
-| VICARE | Respiratory formulation | Cough, cold, respiratory infections | Chest Physician, GP |
-| OROFER | Iron Sucrose / Iron supplements | Iron deficiency anemia | Gynecologist, Physician |
-
-Use this mapping to match products to doctor specialties when coaching.
+After fetching brands, cross-reference with doctor's specialty from missed_doctors or doctor_visits:
+1. Get doctor specialty from API
+2. web_search for brand indications
+3. Match brands to specialty (e.g., gynec products for gynecologist)
+4. Coach MR on which brand to pitch to which doctor

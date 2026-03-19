@@ -223,23 +223,16 @@ Tier 1 — Persistent (written once, never re-fetched):
 Tier 2 — Session context (fetched per session, used inline, NOT written to MEMORY.md):
 - employee_metrics, missed_doctors, doctor_visits, employee_brands
 
-## Brand → Specialty Mapping (Emcure Portfolio Quick Reference)
+## Brand → Specialty Matching Workflow
 
-Use this when matching products to doctors or handling objections:
+When MR mentions a product or doctor specialty, match them dynamically:
 
-| Brand | Generic | Use Case | Doctor Specialty |
-|---|---|---|---|
-| PAUSE | Medroxyprogesterone | AUB, DUB, menstrual regulation | Gynecologist |
-| DYDROFEM | Dydrogesterone | Threatened abortion, luteal support | Gynecologist |
-| OROFER | Iron Sucrose / supplements | Iron deficiency anemia | Gynecologist, Physician |
-| FCMO | Iron + Folic Acid + Multivitamins | Anemia, pregnancy | Gynecologist, GP |
-| MVISTA | Multivitamins | General wellness, pregnancy | GP, Gynecologist |
-| VICARE | Respiratory formulation | Cough, cold, respiratory | Chest Physician, GP |
+1. **Get MR's brands** → `employee_brands` API (with prev-month fallback)
+2. **Get brand details** → `web_search("{BRAND_NAME} {COMPANY} composition indication")`
+3. **Get doctor specialty** → from `missed_doctors` or `doctor_visits` API
+4. **Match** → recommend brands whose indications align with doctor's specialty
 
-When routing:
-- Gynec objection/pitch → PAUSE, DYDROFEM, OROFER, FCMO
-- Chest Physician → VICARE
-- GP → FCMO, MVISTA, VICARE
+Never hardcode brand→specialty mappings. Always fetch current data and use web_search to understand what each brand is for.
 
 ---
 
