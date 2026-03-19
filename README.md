@@ -147,44 +147,71 @@ node mcp-server/index.js
 
 ## API Credentials
 
-The Emcure Super AI API credentials are configured inside `scripts/emcure_api.py`. No environment variables are required by default — they are set as constants in the file.
+The Emcure Super AI API credentials are configured via environment variables. **You must obtain the credentials from the project maintainer** before the system will work.
 
-| Constant | Value | Purpose |
+| Environment Variable | Purpose | Required |
 |---|---|---|
-| `API_KEY` | `1f3b0412d26e714ba4e21f10e75429b9ee5b333691f5fc9c0c17284164e270b3` | App-level authentication for all API calls |
-| `AUTH_EMAIL` | `aryan.patel@emcure.com` | User identity for token generation |
-| `AUTH_HASH` | `a3f1c9e0b47d6f2a9b8c0d3e` | Credential hash for token generation |
-| `AGENT_ID` | `ea8428a4ee64653862f22654268d3bbe322ef19f.1719eef7-6a27-40ff-bbac-5ab0b1e4251f` | Identifies the Emcure data agent to query |
-| `BASE_URL` | `https://super-ai-data-apps-api-pre-prod.azurewebsites.net` | API base URL |
+| `EMCURE_API_KEY` | App-level authentication for all API calls | ✅ Yes |
+| `EMCURE_AUTH_EMAIL` | User identity for token generation | ✅ Yes |
+| `EMCURE_AUTH_HASH` | Credential hash for token generation | ✅ Yes |
+| `EMCURE_AGENT_ID` | Identifies the Emcure data agent to query | ✅ Yes |
+| `EMCURE_BASE_URL` | API base URL (optional, has default) | ❌ No |
 
-To change credentials, edit the constants at the top of `scripts/emcure_api.py`.
+### Getting Your Credentials
 
-### Using Environment Variables (Optional)
+**Contact the project maintainer** to request the Emcure API credentials. You will receive:
+- `EMCURE_API_KEY`
+- `EMCURE_AUTH_EMAIL`
+- `EMCURE_AUTH_HASH`
+- `EMCURE_AGENT_ID`
 
-If you prefer not to commit credentials to the repository, you can modify `scripts/emcure_api.py` to read from environment variables instead of hardcoded constants. Replace the constant definitions with something like:
+Do NOT check these into version control. Store them securely and set them as environment variables only.
 
-```python
-import os
-API_KEY = os.getenv("EMCURE_API_KEY", "")
-AUTH_EMAIL = os.getenv("EMCURE_AUTH_EMAIL", "")
-AUTH_HASH = os.getenv("EMCURE_AUTH_HASH", "")
-AGENT_ID = os.getenv("EMCURE_AGENT_ID", "")
-BASE_URL = os.getenv("EMCURE_BASE_URL", "https://super-ai-data-apps-api-pre-prod.azurewebsites.net")
-```
+### Setting Environment Variables (After Receiving Credentials)
 
-Then set the environment variables before running the scripts or starting the MCP server:
+Once you receive the credentials from the maintainer, make them available to your scripts by adding them to your shell profile:
 
+#### For Bash users (~/.bashrc or ~/.bash_profile):
 ```bash
-export EMCURE_API_KEY="your-api-key"
-export EMCURE_AUTH_EMAIL="aryan.patel@emcure.com"
-export EMCURE_AUTH_HASH="a3f1c9e0b47d6f2a9b8c0d3e"
-export EMCURE_AGENT_ID="ea8428a4ee64653862f22654268d3bbe322ef19f.1719eef7-6a27-40ff-bbac-5ab0b1e4251f"
+export EMCURE_API_KEY="[ask-maintainer-for-value]"
+export EMCURE_AUTH_EMAIL="[ask-maintainer-for-value]"
+export EMCURE_AUTH_HASH="[ask-maintainer-for-value]"
+export EMCURE_AGENT_ID="[ask-maintainer-for-value]"
 export EMCURE_BASE_URL="https://super-ai-data-apps-api-pre-prod.azurewebsites.net"
 ```
 
-When using the MCP server via Claude Code, ensure the environment variables are available in the shell where you start the server.
+Then run:
+```bash
+source ~/.bashrc
+```
 
-**Never commit actual API keys to version control.** If you choose to keep the hardcoded constants, consider adding `scripts/emcure_api.py` to `.gitignore` or using a separate secrets file that is not tracked.
+#### For Zsh users (~/.zshrc):
+```bash
+export EMCURE_API_KEY="[ask-maintainer-for-value]"
+export EMCURE_AUTH_EMAIL="[ask-maintainer-for-value]"
+export EMCURE_AUTH_HASH="[ask-maintainer-for-value]"
+export EMCURE_AGENT_ID="[ask-maintainer-for-value]"
+export EMCURE_BASE_URL="https://super-ai-data-apps-api-pre-prod.azurewebsites.net"
+```
+
+Then run:
+```bash
+source ~/.zshrc
+```
+
+#### For OpenClaw specifically:
+If you're running from a terminal, either:
+1. Source your profile first: `source ~/.bashrc` (or ~/.zshrc)
+2. Or set them inline: `EMCURE_API_KEY="[value]" python3 scripts/emcure_api.py ...`
+3. Or add exports to OpenClaw's startup environment
+
+#### Verify Variables Are Set:
+```bash
+echo $EMCURE_API_KEY
+echo $EMCURE_AUTH_EMAIL
+```
+
+If they're empty, you haven't set the environment variables yet. Contact the maintainer for credentials and try again.
 
 ### Token caching
 

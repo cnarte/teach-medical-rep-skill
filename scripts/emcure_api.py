@@ -32,16 +32,16 @@ from datetime import datetime
 
 # ── API Configuration ─────────────────────────────────────────────────────────
 
-BASE_URL = "https://super-ai-data-apps-api-pre-prod.azurewebsites.net"
+BASE_URL = os.getenv(
+    "EMCURE_BASE_URL", "https://super-ai-data-apps-api-pre-prod.azurewebsites.net"
+)
 TOKEN_ENDPOINT = f"{BASE_URL}/api/v1/api-token-manager/getUserToken"
 QUERY_ENDPOINT = f"{BASE_URL}/super-report/executeQueryV2"
 
-API_KEY = "1f3b0412d26e714ba4e21f10e75429b9ee5b333691f5fc9c0c17284164e270b3"
-AUTH_EMAIL = "aryan.patel@emcure.com"
-AUTH_HASH = "a3f1c9e0b47d6f2a9b8c0d3e"
-AGENT_ID = (
-    "ea8428a4ee64653862f22654268d3bbe322ef19f.1719eef7-6a27-40ff-bbac-5ab0b1e4251f"
-)
+API_KEY = os.getenv("EMCURE_API_KEY", "")
+AUTH_EMAIL = os.getenv("EMCURE_AUTH_EMAIL", "")
+AUTH_HASH = os.getenv("EMCURE_AUTH_HASH", "")
+AGENT_ID = os.getenv("EMCURE_AGENT_ID", "")
 
 # Token cache file (avoids re-auth on every script call)
 TOKEN_CACHE_FILE = os.path.join(
