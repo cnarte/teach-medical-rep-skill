@@ -114,7 +114,11 @@ def get_token(force_refresh=False):
             return cached["auth_token"], cached["pbi_token"], None
 
     if not PLATFORM_AUTH_TOKEN:
-        return None, None, "EMCURE_PLATFORM_TOKEN not set. Get it from the Super AI portal login."
+        return (
+            None,
+            None,
+            "EMCURE_PLATFORM_TOKEN not set. Get it from the Super AI portal login.",
+        )
 
     body = json.dumps({"email": AUTH_EMAIL, "hash": AUTH_HASH}).encode("utf-8")
     headers = {
@@ -127,12 +131,17 @@ def get_token(force_refresh=False):
         with urllib.request.urlopen(req, timeout=30) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
-        error_body = ""
-        try:
-            error_body = e.read().decode("utf-8")
-        except Exception:
-            pass
-        return None, None, f"Token HTTP {e.code}: {e.reason}. {error_body}"
+        # HARD RULE: NO sensitive error data exposed
+        if e.code == 401:
+            return (
+                None,
+                None,
+                "Auth failed. Please contact the maintainer to verify credentials.",
+            )
+        elif e.code == 403:
+            return None, None, "Access denied. Check with your administrator."
+        else:
+            return None, None, f"API request failed. Please try again."
     except urllib.error.URLError as e:
         return None, None, f"Token URL error: {e.reason}"
     except Exception as e:
@@ -178,9 +187,10 @@ def _execute_query(question, retry_on_auth=True):
 
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {auth_token}",
-        "api-key": auth_token,
+        "api-key": API_KEY,
     }
+    if auth_token:
+        headers["Authorization"] = f"Bearer {auth_token}"
     if pbi_token:
         headers["data-source-token"] = pbi_token
 
@@ -189,24 +199,17 @@ def _execute_query(question, retry_on_auth=True):
         with urllib.request.urlopen(req, timeout=60) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
-        error_body = ""
-        try:
-            error_body = e.read().decode("utf-8")
-        except Exception:
-            pass
         if e.code == 401:
-            try:
-                err_data = json.loads(error_body)
-                if "Not authorized 5" in err_data.get("message", ""):
-                    return None, MANUAL_LOGIN_REQUIRED
-            except Exception:
-                pass
             if retry_on_auth:
                 auth_token, pbi_token, err = get_token(force_refresh=True)
                 if err:
-                    return None, f"Token refresh failed: {err}"
+                    return None, MANUAL_LOGIN_REQUIRED
                 return _execute_query(question, retry_on_auth=False)
-        return None, f"Query HTTP {e.code}: {e.reason}. {error_body}"
+            return None, MANUAL_LOGIN_REQUIRED
+        elif e.code == 403:
+            return None, "Access denied. Verify API credentials with administrator."
+        else:
+            return None, "Query failed. Please try again later."
     except urllib.error.URLError as e:
         return None, f"Query URL error: {e.reason}"
     except Exception as e:
@@ -223,7 +226,9 @@ def _columns_rows_to_dicts(data):
     """
     if not isinstance(data, dict):
         return data
-    inner = data.get("data", data)  # handle both {data: {Columns, Rows}} and {Columns, Rows}
+    inner = data.get(
+        "data", data
+    )  # handle both {data: {Columns, Rows}} and {Columns, Rows}
     columns = inner.get("Columns", [])
     rows = inner.get("Rows", [])
     if not columns or not rows:
