@@ -82,7 +82,9 @@ def _extract_profile_from_api(metrics_result, brands_result, phone=None):
 
 
 def lookup_from_api(name, division=None, hq=None, phone=None):
+    from datetime import datetime
     try:
+        # Try current month first
         metrics = get_employee_metrics(name, division, hq)
         if metrics.get("status") == "manual_login_required":
             return metrics, None
@@ -92,6 +94,20 @@ def lookup_from_api(name, division=None, hq=None, phone=None):
         result = _extract_profile_from_api(metrics, brands, phone)
         if result:
             return result, None
+
+        # Fallback: try previous month (current month may have incomplete data)
+        now = datetime.now()
+        if now.month == 1:
+            prev_month, prev_year = "December", str(now.year - 1)
+        else:
+            prev_month = datetime(now.year, now.month - 1, 1).strftime("%B")
+            prev_year = str(now.year)
+        metrics = get_employee_metrics(name, division, hq, month=prev_month, year=prev_year)
+        brands = get_employee_brands(name, division, hq, month=prev_month, year=prev_year)
+        result = _extract_profile_from_api(metrics, brands, phone)
+        if result:
+            return result, None
+
         return None, "Employee not found in API response"
     except Exception as e:
         return None, f"API lookup failed: {e}"

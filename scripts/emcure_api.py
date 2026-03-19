@@ -43,6 +43,11 @@ AUTH_EMAIL = os.getenv("EMCURE_AUTH_EMAIL", "")
 AUTH_HASH = os.getenv("EMCURE_AUTH_HASH", "")
 AGENT_ID = os.getenv("EMCURE_AGENT_ID", "")
 
+# Platform auth token (HS256 JWT from Super AI portal login).
+# This is SEPARATE from the PBI token — used as Bearer + api-key on executeQueryV2.
+# Obtained from the portal login flow; has ~24h expiry.
+PLATFORM_AUTH_TOKEN = os.getenv("EMCURE_PLATFORM_TOKEN", "")
+
 # Token cache file (avoids re-auth on every script call)
 TOKEN_CACHE_FILE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), ".emcure_token_cache.json"
@@ -80,6 +85,7 @@ def _save_token_cache(auth_token, pbi_token):
     cache = {
         "auth_token": auth_token,
         "pbi_token": pbi_token,
+        "platform_token": PLATFORM_AUTH_TOKEN,
         "timestamp": time.time(),
     }
     try:
@@ -91,7 +97,13 @@ def _save_token_cache(auth_token, pbi_token):
 
 def get_token(force_refresh=False):
     """
-    Get auth_token and pbi_token. Uses cache unless expired or force_refresh.
+    Get auth_token (platform JWT) and pbi_token (Power BI access token).
+
+    The platform token (EMCURE_PLATFORM_TOKEN env var) is used as:
+      - Bearer token in Authorization header
+      - api-key header value
+    The PBI token is used as:
+      - data-source-token header value
 
     Returns: (auth_token, pbi_token, None) on success
              (None, None, error_message) on failure
@@ -100,6 +112,9 @@ def get_token(force_refresh=False):
         cached = _load_cached_token()
         if cached:
             return cached["auth_token"], cached["pbi_token"], None
+
+    if not PLATFORM_AUTH_TOKEN:
+        return None, None, "EMCURE_PLATFORM_TOKEN not set. Get it from the Super AI portal login."
 
     body = json.dumps({"email": AUTH_EMAIL, "hash": AUTH_HASH}).encode("utf-8")
     headers = {
@@ -123,22 +138,21 @@ def get_token(force_refresh=False):
     except Exception as e:
         return None, None, f"Token error: {e}"
 
+    pbi_token = None
     if data.get("isSuccess") and isinstance(data.get("data"), dict):
         pbi_token = data["data"].get("accessToken")
-        auth_token = pbi_token
-    else:
-        auth_token = data.get("token") or data.get("auth_token")
-        pbi_token = data.get("accessToken") or data.get("pbi_token")
 
-    if not auth_token:
+    if not pbi_token:
         return (
             None,
             None,
-            f"No auth_token in response. Full response: {json.dumps(data)}",
+            f"No PBI token in response. Full response: {json.dumps(data)}",
         )
 
-    _save_token_cache(auth_token, pbi_token or "")
-    return auth_token, pbi_token or "", None
+    # auth_token = platform JWT from env var
+    auth_token = PLATFORM_AUTH_TOKEN
+    _save_token_cache(auth_token, pbi_token)
+    return auth_token, pbi_token, None
 
 
 # ── Query Execution ───────────────────────────────────────────────────────────
@@ -165,6 +179,7 @@ def _execute_query(question, retry_on_auth=True):
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {auth_token}",
+        "api-key": auth_token,
     }
     if pbi_token:
         headers["data-source-token"] = pbi_token
@@ -198,6 +213,24 @@ def _execute_query(question, retry_on_auth=True):
         return None, f"Query error: {e}"
 
     return data, None
+
+
+def _columns_rows_to_dicts(data):
+    """
+    Convert the API's {Columns: [...], Rows: [[...], ...]} format
+    into a list of dicts for easier consumption.
+    Strips bracket wrappers from column names (e.g. '[Employee]' -> 'Employee').
+    """
+    if not isinstance(data, dict):
+        return data
+    inner = data.get("data", data)  # handle both {data: {Columns, Rows}} and {Columns, Rows}
+    columns = inner.get("Columns", [])
+    rows = inner.get("Rows", [])
+    if not columns or not rows:
+        return []
+    # Clean column names: '[Employee]' -> 'Employee'
+    clean_cols = [c.strip("[]") for c in columns]
+    return [dict(zip(clean_cols, row)) for row in rows]
 
 
 def _get_current_month_year():
@@ -246,7 +279,7 @@ def get_employee_metrics(name, division=None, hq=None, month=None, year=None):
         "status": "success",
         "source": "emcure_api",
         "query": question,
-        "result": data,
+        "result": _columns_rows_to_dicts(data),
     }
 
 
@@ -275,7 +308,7 @@ def get_doctor_visits(name, division=None, hq=None, month=None, year=None):
         "status": "success",
         "source": "emcure_api",
         "query": question,
-        "result": data,
+        "result": _columns_rows_to_dicts(data),
     }
 
 
@@ -303,7 +336,7 @@ def get_missed_doctors(name, division=None, hq=None, month=None, year=None):
         "status": "success",
         "source": "emcure_api",
         "query": question,
-        "result": data,
+        "result": _columns_rows_to_dicts(data),
     }
 
 
@@ -330,7 +363,7 @@ def get_employee_brands(name, division=None, hq=None, month=None, year=None):
         "status": "success",
         "source": "emcure_api",
         "query": question,
-        "result": data,
+        "result": _columns_rows_to_dicts(data),
     }
 
 
@@ -362,7 +395,7 @@ def get_employees(division=None, hq=None, month=None, year=None):
         "status": "success",
         "source": "emcure_api",
         "query": question,
-        "result": data,
+        "result": _columns_rows_to_dicts(data),
     }
 
 
